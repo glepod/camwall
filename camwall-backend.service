@@ -1,0 +1,16 @@
+[Unit]
+Description=CamWall backend (UI + ONVIF PTZ)
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+Environment=CAMWALL_PORT=8090
+EnvironmentFile=-/opt/camwall/camwall.env
+ExecStart=/usr/bin/python3 /opt/camwall/backend/server.py
+Restart=always
+RestartSec=3
+User=ziggy
+
+[Install]
+WantedBy=multi-user.target

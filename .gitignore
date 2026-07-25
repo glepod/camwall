@@ -1,0 +1,16 @@
+.env
+camwall.env
+recorder.env
+cameras.json
+cameras_config.json
+nodes.json
+power.json
+recording_config.json
+recording_locks.json
+go2rtc.yaml
+go2rtc-*.yaml
+recordings/
+*.ffmpeg.log
+__pycache__/
+*.py[cod]
+.DS_Store

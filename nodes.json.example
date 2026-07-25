@@ -1,0 +1,12 @@
+[
+  {
+    "id": "master",
+    "name": "Master",
+    "role": "master",
+    "host": "192.168.1.10",
+    "go2rtc_proxy": "/node/master/go2rtc",
+    "recording_proxy": "/node/master/recording",
+    "webrtc_candidate": "192.168.1.10:8555",
+    "cameras": ["front_door", "driveway"]
+  }
+]

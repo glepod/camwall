@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <title>CamWall</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header id="topbar">
+    <div class="brand">📹 CamWall</div>
+    <div class="spacer"></div>
+    <button id="btn-recording" class="tbtn" title="Recording and playback">⏺ Recordings</button>
+    <button id="btn-system" class="tbtn" title="System status">⚙ System</button>
+    <button id="btn-mute-all" class="tbtn" title="Mute all">🔇 Mute all</button>
+    <button id="btn-fullscreen-page" class="tbtn" title="Fullscreen">⛶</button>
+  </header>
+
+  <main id="grid" class="grid"><!-- tiles injected --></main>
+
+  <!-- Fullscreen viewer overlay -->
+  <div id="viewer" class="viewer hidden">
+    <div id="viewer-stage" class="stage">
+      <!-- video-rtc element injected here -->
+    </div>
+
+    <div class="viewer-top">
+      <button id="v-back" class="vbtn" title="Back to grid">‹ Grid</button>
+      <div id="v-title" class="v-title"></div>
+      <div class="spacer"></div>
+      <button id="v-cfg" class="vbtn" title="Camera settings">⚙</button>
+      <button id="v-talk" class="vbtn" title="Talk to camera">🎤</button>
+      <button id="v-power" class="vbtn" title="Turn feed on/off">⏻</button>
+      <button id="v-mute" class="vbtn" title="Mute/unmute">🔊</button>
+      <input id="v-vol" class="v-vol" type="range" min="0" max="1" step="0.01" value="1" title="Volume">
+      <button id="v-fs" class="vbtn" title="Fullscreen">⛶</button>
+    </div>
+
+    <!-- PTZ D-pad -->
+    <div id="ptz" class="ptz">
+      <button class="ptz-btn up"    data-x="0"    data-y="0.6"  aria-label="Up">▲</button>
+      <button class="ptz-btn left"  data-x="-0.6" data-y="0"    aria-label="Left">◀</button>
+      <button class="ptz-btn home"  data-home="1" aria-label="Recenter">⌂</button>
+      <button class="ptz-btn right" data-x="0.6"  data-y="0"    aria-label="Right">▶</button>
+      <button class="ptz-btn down"  data-x="0"    data-y="-0.6" aria-label="Down">▼</button>
+    </div>
+
+    <!-- Digital zoom controls -->
+    <div id="zoomctl" class="zoomctl">
+      <button id="z-in"  class="vbtn" title="Zoom in">＋</button>
+      <button id="z-out" class="vbtn" title="Zoom out">－</button>
+      <button id="z-reset" class="vbtn" title="Reset zoom">1:1</button>
+    </div>
+
+    <div id="hint" class="hint">Drag / pinch to zoom &amp; pan &nbsp;·&nbsp; arrows = camera pan/tilt</div>
+  </div>
+
+  <!-- Camera settings modal -->
+  <div id="cfg" class="cfg-modal hidden">
+    <div class="cfg-box">
+      <div class="cfg-title">Camera Settings</div>
+      <label class="cfg-field">
+        <span>Name</span>
+        <input id="cfg-name" type="text" maxlength="40" autocomplete="off">
+      </label>
+      <label class="cfg-field">
+        <span>Timestamp</span>
+        <select id="cfg-ts">
+          <option value="off">Off</option>
+          <option value="osd">Camera OSD — burned in, no latency</option>
+          <option value="ffmpeg">Overlay — server-drawn (adds latency in fullscreen)</option>
+        </select>
+      </label>
+      <div class="cfg-actions">
+        <button id="cfg-cancel" class="tbtn">Cancel</button>
+        <button id="cfg-save" class="tbtn active">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- System status modal -->
+  <div id="sys" class="sys-modal hidden">
+    <div class="sys-box">
+      <div class="sys-head">
+        <div>
+          <div class="sys-title">System</div>
+          <div id="sys-subtitle" class="sys-subtitle">Loading…</div>
+        </div>
+        <div class="spacer"></div>
+        <button id="sys-refresh" class="tbtn">Refresh</button>
+        <button id="sys-close" class="tbtn">Close</button>
+      </div>
+      <div class="sys-tabs" role="tablist">
+        <button class="sys-tab active" data-tab="overview">Overview</button>
+        <button class="sys-tab" data-tab="cameras">Cameras</button>
+        <button class="sys-tab" data-tab="nodes">Nodes</button>
+        <button class="sys-tab" data-tab="streams">Streams</button>
+        <button class="sys-tab" data-tab="network">Network</button>
+        <button class="sys-tab" data-tab="raw">Raw</button>
+      </div>
+      <div id="sys-content" class="sys-content"></div>
+    </div>
+  </div>
+
+  <!-- Recording/playback modal -->
+  <div id="rec" class="sys-modal hidden">
+    <div class="sys-box rec-box">
+      <div class="sys-head">
+        <div>
+          <div class="sys-title">Recordings</div>
+          <div id="rec-subtitle" class="sys-subtitle">Loading…</div>
+        </div>
+        <div class="spacer"></div>
+        <button id="rec-all-on" class="tbtn">All On</button>
+        <button id="rec-all-off" class="tbtn">All Off</button>
+        <button id="rec-refresh" class="tbtn">Refresh</button>
+        <button id="rec-close" class="tbtn">Close</button>
+      </div>
+      <div class="sys-tabs" role="tablist">
+        <button class="rec-tab active" data-tab="playback">Recordings</button>
+        <button class="rec-tab" data-tab="controls">Controls</button>
+        <button class="rec-tab" data-tab="retention">Retention</button>
+        <button class="rec-tab" data-tab="archive">Archive</button>
+      </div>
+      <div id="rec-content" class="sys-content"></div>
+    </div>
+  </div>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>

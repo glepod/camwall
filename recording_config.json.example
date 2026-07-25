@@ -1,0 +1,14 @@
+{
+  "global": {
+    "enabled": false,
+    "segment_minutes": 15,
+    "retention_hours": 24,
+    "max_mb": 10240,
+    "archive": {
+      "enabled": false,
+      "type": "none",
+      "location": ""
+    }
+  },
+  "cameras": {}
+}
