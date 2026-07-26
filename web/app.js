@@ -893,6 +893,7 @@ function renderRecording() {
   recSubtitle.textContent = `Generated ${recData.generated_at}`;
   document.querySelectorAll('.rec-tab').forEach(b => b.classList.toggle('active', b.dataset.tab === recTab));
   recContent.classList.toggle('rec-playback-content', recTab === 'playback');
+  updateRecordingBodyMode();
   const renderers = { controls: renderRecControls, retention: renderRetention, playback: renderPlayback, archive: renderArchive };
   recContent.innerHTML = renderers[recTab](recData);
   if (recTab === 'playback') wireRecPlayer();
@@ -1150,12 +1151,21 @@ function openRecording() {
   if (!recModal) return;
   recModal.classList.remove('hidden');
   recTab = 'playback';
+  updateRecordingBodyMode();
   startRecordingTimers();
   loadRecording(true);
 }
 function closeRecording() {
   if (recModal) recModal.classList.add('hidden');
+  updateRecordingBodyMode();
   stopRecordingTimers();
+}
+
+function updateRecordingBodyMode() {
+  document.body.classList.toggle(
+    'rec-playback-open',
+    !!recModal && !recModal.classList.contains('hidden') && recTab === 'playback',
+  );
 }
 
 document.getElementById('btn-recording')?.addEventListener('click', openRecording);
@@ -1166,6 +1176,7 @@ document.getElementById('rec-all-off')?.addEventListener('click', () => setAllRe
 recModal?.addEventListener('click', (e) => { if (e.target === recModal) closeRecording(); });
 document.querySelectorAll('.rec-tab').forEach(btn => btn.addEventListener('click', async () => {
   recTab = btn.dataset.tab;
+  updateRecordingBodyMode();
   if (recTab === 'playback' && !recAllFiles.length) await loadRecordings().catch(() => {});
   if (recTab === 'playback') startRecordingTimers();
   renderRecording();

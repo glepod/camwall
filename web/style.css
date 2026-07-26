@@ -450,6 +450,43 @@ html, body {
   .sys-box { width: 98vw; height: 94vh; }
   .sys-grid.two { grid-template-columns: 1fr; }
   .sys-head { align-items: flex-start; flex-wrap: wrap; }
+
+  body.rec-playback-open {
+    height: auto;
+    min-height: 100%;
+    overflow-y: auto;
+  }
+  body.rec-playback-open #rec.sys-modal {
+    position: absolute;
+    min-height: 100vh;
+    height: auto;
+    align-items: flex-start;
+    justify-content: flex-start;
+    padding: 6px;
+    overflow: visible;
+  }
+  body.rec-playback-open #rec .rec-box {
+    width: 100%;
+    height: auto;
+    min-height: calc(100vh - 12px);
+  }
+  body.rec-playback-open #rec .sys-content,
+  body.rec-playback-open #rec .rec-playback-content,
+  body.rec-playback-open #rec .rec-layout,
+  body.rec-playback-open #rec .rec-segments-card {
+    height: auto;
+    min-height: 0;
+    overflow: visible;
+  }
+  body.rec-playback-open #rec .rec-table-scroll {
+    overflow-x: auto;
+    overflow-y: visible;
+  }
+  body.rec-playback-open #rec .rec-player {
+    height: auto;
+    aspect-ratio: 16 / 9;
+    max-height: 46vh;
+  }
 }
 @media (max-width: 420px) {
   .grid { grid-template-columns: 1fr; }
