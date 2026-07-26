@@ -451,6 +451,7 @@ html, body {
   .sys-grid.two { grid-template-columns: 1fr; }
   .sys-head { align-items: flex-start; flex-wrap: wrap; }
 
+  html.rec-playback-open,
   body.rec-playback-open {
     height: auto;
     min-height: 100%;

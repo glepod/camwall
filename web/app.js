@@ -1162,10 +1162,9 @@ function closeRecording() {
 }
 
 function updateRecordingBodyMode() {
-  document.body.classList.toggle(
-    'rec-playback-open',
-    !!recModal && !recModal.classList.contains('hidden') && recTab === 'playback',
-  );
+  const open = !!recModal && !recModal.classList.contains('hidden') && recTab === 'playback';
+  document.documentElement.classList.toggle('rec-playback-open', open);
+  document.body.classList.toggle('rec-playback-open', open);
 }
 
 document.getElementById('btn-recording')?.addEventListener('click', openRecording);
