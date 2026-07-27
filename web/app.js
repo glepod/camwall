@@ -81,8 +81,21 @@ function makePlayer(streamName, parent, { muted = true }) {
 //  - ffmpeg mode uses transcoded streams with a burned-in timestamp
 //  - off/osd modes use the plain streams (osd = camera burns it in at source),
 //    so fullscreen stays a direct copy (no transcode = lowest latency)
-function gridStream(cam) { return cam.ts === 'ffmpeg' ? cam.key + '_gridts' : cam.key + '_grid'; }
-function mainStream(cam) { return cam.ts === 'ffmpeg' ? cam.key + '_maints' : cam.key; }
+function namedStream(cam, mode, fallback) {
+  const selected = mode && mode !== 'auto' ? mode : fallback;
+  if (selected === 'main') return cam.key;
+  if (selected === 'sub') return cam.key + '_sub';
+  if (selected === 'grid') return cam.key + '_grid';
+  if (selected === 'gridts') return cam.key + '_gridts';
+  if (selected === 'maints') return cam.key + '_maints';
+  return cam.key;
+}
+function gridStream(cam) {
+  return namedStream(cam, cam.grid_stream, cam.ts === 'ffmpeg' ? 'gridts' : 'grid');
+}
+function mainStream(cam) {
+  return namedStream(cam, cam.main_stream, cam.ts === 'ffmpeg' ? 'maints' : 'main');
+}
 
 /* ------------------------------------------------------------------ *
  *  Grid
@@ -497,6 +510,8 @@ function showHint() { hint.classList.remove('fade'); clearTimeout(showHint._t); 
 const cfgModal = document.getElementById('cfg');
 const cfgName  = document.getElementById('cfg-name');
 const cfgTs    = document.getElementById('cfg-ts');
+const cfgGridStream = document.getElementById('cfg-grid-stream');
+const cfgMainStream = document.getElementById('cfg-main-stream');
 const cfgSave  = document.getElementById('cfg-save');
 let cfgKey = null;
 
@@ -507,6 +522,8 @@ function openConfig(key) {
   cfgKey = key;
   cfgName.value = cam.name;
   cfgTs.value = cam.ts || 'off';
+  if (cfgGridStream) cfgGridStream.value = cam.grid_stream || 'auto';
+  if (cfgMainStream) cfgMainStream.value = cam.main_stream || 'auto';
   cfgModal.classList.remove('hidden');
   cfgName.focus();
 }
@@ -515,9 +532,17 @@ function closeConfig() { if (cfgModal) cfgModal.classList.add('hidden'); cfgKey 
 async function saveConfig() {
   if (!cfgKey) return;
   const key = cfgKey, name = cfgName.value.trim(), ts = cfgTs.value;
+  const grid_stream = cfgGridStream ? cfgGridStream.value : 'auto';
+  const main_stream = cfgMainStream ? cfgMainStream.value : 'auto';
   cfgSave.disabled = true; cfgSave.textContent = 'Saving…';
   try {
-    const url = `/api/config?cam=${encodeURIComponent(key)}&name=${encodeURIComponent(name)}&ts=${ts}`;
+    const url = `/api/config?` + new URLSearchParams({
+      cam: key,
+      name,
+      ts,
+      grid_stream,
+      main_stream,
+    }).toString();
     const d = await fetch(url).then(r => r.json());
     if (d.cameras) {
       cameras = d.cameras;

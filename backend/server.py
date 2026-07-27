@@ -44,6 +44,7 @@ ONVIF_PASS = os.environ.get("ONVIF_PASS", "")
 ONVIF_PORT = 2020
 PROFILE    = "profile_1"     # Tapo main-stream profile (verified)
 TS_MODES   = ("off", "osd", "ffmpeg")
+STREAM_MODES = ("auto", "main", "sub", "grid", "gridts", "maints")
 ARCHIVE_TYPES = ("none", "local", "samba", "s3", "ftp")
 REC_DEFAULT = {
     "global": {
@@ -526,6 +527,8 @@ def merged_cameras():
         out.append({"key": c["key"], "ip": c["ip"],
                     "name": o.get("name", c["name"]),
                     "ts": o.get("ts", "off"),
+                    "grid_stream": o.get("grid_stream", "auto"),
+                    "main_stream": o.get("main_stream", "auto"),
                     "node": node_id,
                     "node_name": node.get("name", node_id),
                     "ws_base": node_go2rtc_ws_base(node)})
@@ -945,6 +948,15 @@ class Handler(BaseHTTPRequestHandler):
                         set_camera_osd(CAM_BY_KEY[key]["ip"], ts == "osd")
                     except Exception as e:
                         osd_err = str(e)
+            for field in ("grid_stream", "main_stream"):
+                if field in q:
+                    stream = q[field][0]
+                    if stream not in STREAM_MODES:
+                        return self._send(400, json.dumps({"error": f"bad {field}"}))
+                    if stream == "auto":
+                        entry.pop(field, None)
+                    else:
+                        entry[field] = stream
             with _power_lock:
                 CONFIG[key] = entry
                 save_cfg(CONFIG)

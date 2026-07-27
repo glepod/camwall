@@ -73,6 +73,28 @@
           <option value="ffmpeg">Overlay — server-drawn (adds latency in fullscreen)</option>
         </select>
       </label>
+      <label class="cfg-field">
+        <span>Grid stream</span>
+        <select id="cfg-grid-stream">
+          <option value="auto">Auto</option>
+          <option value="grid">Sub stream, transcoded</option>
+          <option value="sub">Sub stream, direct</option>
+          <option value="main">Main stream, direct</option>
+          <option value="gridts">Sub stream, timestamp overlay</option>
+          <option value="maints">Main stream, transcoded</option>
+        </select>
+      </label>
+      <label class="cfg-field">
+        <span>Full-screen stream</span>
+        <select id="cfg-main-stream">
+          <option value="auto">Auto</option>
+          <option value="main">Main stream, direct</option>
+          <option value="maints">Main stream, transcoded</option>
+          <option value="sub">Sub stream, direct</option>
+          <option value="grid">Sub stream, transcoded</option>
+          <option value="gridts">Sub stream, timestamp overlay</option>
+        </select>
+      </label>
       <div class="cfg-actions">
         <button id="cfg-cancel" class="tbtn">Cancel</button>
         <button id="cfg-save" class="tbtn active">Save</button>
