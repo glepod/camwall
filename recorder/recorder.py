@@ -146,12 +146,15 @@ def start_recording(cam, conf):
     key = cam["key"]
     if key in processes and processes[key].poll() is None:
         return
-    if not ONVIF_USER or not ONVIF_PASS:
+    source = cam.get("rtsp_main")
+    if not source and (not ONVIF_USER or not ONVIF_PASS):
         raise RuntimeError("ONVIF_USER and ONVIF_PASS must be set")
+    if not source:
+        source = f"rtsp://{ONVIF_USER}:{ONVIF_PASS}@{cam['ip']}:554/stream1"
     cmd = FFMPEG_CMD + [
         "-hide_banner", "-loglevel", "error",
         "-rtsp_transport", "tcp",
-        "-i", f"rtsp://{ONVIF_USER}:{ONVIF_PASS}@{cam['ip']}:554/stream1",
+        "-i", source,
         "-map", "0:v:0", "-c:v", "copy", "-an",
         "-f", "segment",
         "-segment_format", "mp4",

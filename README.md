@@ -38,7 +38,17 @@ cd camwall
 sudo ./scripts/install.sh
 ```
 
-Then edit the installed config:
+The installer installs system packages on Debian/Ubuntu, copies the app to `/opt/camwall`, installs systemd services, renders `go2rtc.yaml`, starts go2rtc with Docker Compose, and starts the backend/recorder services.
+
+Then open:
+
+```text
+http://<camwall-host>:8090/
+```
+
+Camera inventory can be edited in the app under **System -> Config**. Use **Save** to write `cameras.json`/`nodes.json`, then **Apply** to regenerate `go2rtc.yaml`, recreate go2rtc, and reload recorder config.
+
+You can also edit the installed config files directly:
 
 ```bash
 sudoedit /opt/camwall/camwall.env
@@ -47,19 +57,13 @@ sudoedit /opt/camwall/nodes.json
 sudoedit /opt/camwall/recording_config.json
 ```
 
-Render the go2rtc config and start services:
+Render/apply manually after direct edits:
 
 ```bash
 cd /opt/camwall
 ./scripts/render-go2rtc.sh
-docker compose up -d
+docker compose up -d --force-recreate go2rtc
 sudo systemctl restart camwall-backend camwall-recorder
-```
-
-Open:
-
-```text
-http://<camwall-host>:8090/
 ```
 
 ## Configuration
@@ -90,11 +94,28 @@ CAMWALL_PUBLIC_URL=
 
 ```json
 [
-  { "key": "front_door", "name": "Front Door", "ip": "192.168.1.101" }
+  {
+    "key": "front_door",
+    "name": "Front Door",
+    "ip": "192.168.1.101"
+  }
 ]
 ```
 
 `key` should be stable and contain only simple identifier characters such as lowercase letters, numbers, and underscores.
+
+For non-Tapo paths or test streams, provide explicit RTSP URLs:
+
+```json
+{
+  "key": "mock01",
+  "name": "Mock Camera 01",
+  "ip": "192.168.1.50",
+  "rtsp_main": "rtsp://192.168.1.50:554/mock01/stream1",
+  "rtsp_sub": "rtsp://192.168.1.50:554/mock01/stream2",
+  "onvif_port": 2020
+}
+```
 
 ### nodes.json
 
@@ -116,6 +137,64 @@ Single-node example:
 ```
 
 For multiple nodes, install CamWall on each node, set `CAMWALL_NODE_ID` for each recorder, and assign cameras to the appropriate node in `nodes.json`.
+
+`host` is the internal address the backend uses for node APIs. For direct browser access, CamWall defaults media URLs to `ws://<host>:1984` and `http://<host>:8091`. If the browser needs a different public host, add:
+
+```json
+{
+  "go2rtc_ws": "ws://public-host:1984/api/ws?src=",
+  "recording_url": "http://public-host:8091"
+}
+```
+
+If CamWall is behind a reverse proxy that provides `/node/<id>/go2rtc` and `/node/<id>/recording`, set `CAMWALL_USE_PROXY_ROUTES=1` in `camwall.env`.
+
+## Optional Worker Install
+
+Install the app on a worker over SSH from a prepared master checkout:
+
+```bash
+CAMWALL_WORKER_HOST=192.168.1.50 \
+CAMWALL_WORKER_USER=ubuntu \
+CAMWALL_WORKER_NODE_ID=worker1 \
+./scripts/install-remote-worker.sh
+```
+
+For password SSH, set `CAMWALL_WORKER_SSH_PASS` in the environment before running the script. Prefer SSH keys for production.
+
+Then add the worker to **System -> Config** or `nodes.json`, assign cameras to that worker, and apply the config.
+
+## Mock Camera Test Environment
+
+A mock camera host can generate repeatable RTSP streams and respond to ONVIF/PTZ requests:
+
+```bash
+sudo CAMWALL_MOCK_CAMERA_COUNT=4 ./scripts/mock-cameras/install.sh
+```
+
+On the CamWall master, point config at the mock host:
+
+```bash
+sudo python3 /opt/camwall/scripts/configure-mock-cameras.py \
+  --root /opt/camwall \
+  --mock-host <mock-private-or-lan-ip> \
+  --master-host <master-internal-ip> \
+  --public-host <master-browser-reachable-ip> \
+  --count 4
+
+cd /opt/camwall
+./scripts/render-go2rtc.sh master
+docker compose up -d --force-recreate go2rtc
+sudo systemctl restart camwall-backend camwall-recorder
+```
+
+AWS helper:
+
+```bash
+AWS_PROFILE=ziggy AWS_REGION=us-east-1 ./scripts/aws/provision-test-env.sh
+```
+
+The AWS script creates two tagged EC2 instances: one CamWall master and one mock-camera host. It does not install the app by itself; copy or clone the repo to the instances and run the install scripts above.
 
 ## Services and Ports
 

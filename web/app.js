@@ -550,6 +550,7 @@ const sysModal = document.getElementById('sys');
 const sysContent = document.getElementById('sys-content');
 const sysSubtitle = document.getElementById('sys-subtitle');
 let sysData = null;
+let sysConfigData = null;
 let sysTab = 'overview';
 
 function esc(v) {
@@ -666,6 +667,52 @@ function renderNetwork(d) {
   </div>`;
 }
 
+async function loadAdminConfig() {
+  if (sysConfigData) return sysConfigData;
+  sysConfigData = await fetch('/api/admin/config').then(r => r.json());
+  return sysConfigData;
+}
+
+function renderConfig(d) {
+  const cfg = sysConfigData || { cameras: [], nodes: [] };
+  return `<div class="sys-grid">
+    ${card('Cameras', `
+      <div class="config-actions">
+        <button class="tbtn active" data-config-action="add-camera">Add camera</button>
+        <button class="tbtn" data-config-action="save-config">Save</button>
+        <button class="tbtn" data-config-action="apply-config">Apply</button>
+      </div>
+      <table class="config-table"><thead><tr><th>Key</th><th>Name</th><th>IP / host</th><th>Main RTSP</th><th>Sub RTSP</th><th></th></tr></thead><tbody>
+        ${(cfg.cameras || []).map((c, i) => `<tr data-camera-index="${i}">
+          <td><input class="rec-input" data-field="key" value="${esc(c.key || '')}"></td>
+          <td><input class="rec-input" data-field="name" value="${esc(c.name || '')}"></td>
+          <td><input class="rec-input" data-field="ip" value="${esc(c.ip || '')}"></td>
+          <td><input class="rec-input wide" data-field="rtsp_main" value="${esc(c.rtsp_main || '')}" placeholder="default /stream1"></td>
+          <td><input class="rec-input wide" data-field="rtsp_sub" value="${esc(c.rtsp_sub || '')}" placeholder="default /stream2"></td>
+          <td><button class="tbtn" data-config-action="delete-camera" data-index="${i}">Delete</button></td>
+        </tr>`).join('')}
+      </tbody></table>
+    `)}
+    ${card('Nodes', `
+      <div class="config-actions"><button class="tbtn active" data-config-action="add-node">Add node</button></div>
+      <table class="config-table"><thead><tr><th>ID</th><th>Name</th><th>Role</th><th>Internal host</th><th>WebRTC candidate</th><th>go2rtc WS</th><th>Recording URL</th><th>Cameras</th><th></th></tr></thead><tbody>
+        ${(cfg.nodes || []).map((n, i) => `<tr data-node-index="${i}">
+          <td><input class="rec-input" data-field="id" value="${esc(n.id || '')}"></td>
+          <td><input class="rec-input" data-field="name" value="${esc(n.name || '')}"></td>
+          <td><input class="rec-input" data-field="role" value="${esc(n.role || '')}"></td>
+          <td><input class="rec-input" data-field="host" value="${esc(n.host || '')}"></td>
+          <td><input class="rec-input" data-field="webrtc_candidate" value="${esc(n.webrtc_candidate || '')}"></td>
+          <td><input class="rec-input wide" data-field="go2rtc_ws" value="${esc(n.go2rtc_ws || '')}"></td>
+          <td><input class="rec-input wide" data-field="recording_url" value="${esc(n.recording_url || '')}"></td>
+          <td><input class="rec-input wide" data-field="cameras" value="${esc((n.cameras || []).join(', '))}"></td>
+          <td><button class="tbtn" data-config-action="delete-node" data-index="${i}">Delete</button></td>
+        </tr>`).join('')}
+      </tbody></table>
+    `)}
+    ${card('Apply result', '<pre id="config-result" class="raw">No changes applied.</pre>')}
+  </div>`;
+}
+
 function renderSystem() {
   if (!sysData) {
     sysContent.innerHTML = '<div class="sys-loading">Loading…</div>';
@@ -673,10 +720,11 @@ function renderSystem() {
   }
   sysSubtitle.textContent = `Generated ${sysData.generated_at}`;
   document.querySelectorAll('.sys-tab').forEach(b => b.classList.toggle('active', b.dataset.tab === sysTab));
-  const renderers = { overview: renderOverview, cameras: renderCameras, nodes: renderNodes, streams: renderStreams, network: renderNetwork };
+  const renderers = { overview: renderOverview, cameras: renderCameras, config: renderConfig, nodes: renderNodes, streams: renderStreams, network: renderNetwork };
   sysContent.innerHTML = sysTab === 'raw'
     ? `<pre class="raw">${esc(JSON.stringify(sysData, null, 2))}</pre>`
     : renderers[sysTab](sysData);
+  if (sysTab === 'config') wireConfigTab();
 }
 
 async function loadSystem() {
@@ -684,6 +732,7 @@ async function loadSystem() {
   sysContent.innerHTML = '<div class="sys-loading">Loading…</div>';
   try {
     sysData = await fetch('/api/system').then(r => r.json());
+    if (sysTab === 'config') await loadAdminConfig();
     renderSystem();
   } catch (e) {
     sysContent.innerHTML = `<div class="sys-error">Failed to load system status: ${esc(e && e.message ? e.message : e)}</div>`;
@@ -703,8 +752,87 @@ document.getElementById('sys-refresh')?.addEventListener('click', loadSystem);
 sysModal?.addEventListener('click', (e) => { if (e.target === sysModal) closeSystem(); });
 document.querySelectorAll('.sys-tab').forEach(btn => btn.addEventListener('click', () => {
   sysTab = btn.dataset.tab;
-  renderSystem();
+  if (sysTab === 'config' && !sysConfigData) {
+    sysContent.innerHTML = '<div class="sys-loading">Loading…</div>';
+    loadAdminConfig().then(renderSystem).catch(e => {
+      sysContent.innerHTML = `<div class="sys-error">Failed to load config: ${esc(e && e.message ? e.message : e)}</div>`;
+    });
+  } else {
+    renderSystem();
+  }
 }));
+
+function readConfigForm() {
+  const cameras = [...sysContent.querySelectorAll('[data-camera-index]')].map(row => {
+    const item = {};
+    row.querySelectorAll('[data-field]').forEach(input => { item[input.dataset.field] = input.value.trim(); });
+    return item;
+  }).filter(c => c.key || c.name || c.ip);
+  const nodes = [...sysContent.querySelectorAll('[data-node-index]')].map(row => {
+    const item = {};
+    row.querySelectorAll('[data-field]').forEach(input => {
+      item[input.dataset.field] = input.dataset.field === 'cameras'
+        ? input.value.split(',').map(v => v.trim()).filter(Boolean)
+        : input.value.trim();
+    });
+    return item;
+  }).filter(n => n.id || n.host);
+  sysConfigData = { cameras, nodes };
+  return sysConfigData;
+}
+
+async function saveAdminConfig(apply = false) {
+  const result = document.getElementById('config-result');
+  if (result) result.textContent = apply ? 'Saving and applying…' : 'Saving…';
+  const payload = readConfigForm();
+  const saved = await fetch('/api/admin/config', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  }).then(r => r.json());
+  if (!saved.ok) throw new Error(saved.error || 'save failed');
+  sysConfigData = { cameras: saved.cameras || [], nodes: saved.nodes || [], camera_overrides: saved.camera_overrides || {} };
+  if (apply) {
+    const applied = await fetch('/api/admin/apply', { method: 'POST' }).then(r => r.json());
+    if (result) result.textContent = JSON.stringify(applied, null, 2);
+  } else if (result) {
+    result.textContent = 'Saved. Use Apply to regenerate go2rtc and reload recorders.';
+  }
+  sysData = await fetch('/api/system').then(r => r.json());
+  renderSystem();
+}
+
+function wireConfigTab() {
+  sysContent.querySelectorAll('[data-config-action]').forEach(btn => btn.addEventListener('click', async () => {
+    const action = btn.dataset.configAction;
+    try {
+      if (action === 'add-camera') {
+        readConfigForm();
+        sysConfigData.cameras.push({ key: 'new_camera', name: 'New Camera', ip: '' });
+        renderSystem();
+      } else if (action === 'delete-camera') {
+        readConfigForm();
+        sysConfigData.cameras.splice(Number(btn.dataset.index), 1);
+        renderSystem();
+      } else if (action === 'add-node') {
+        readConfigForm();
+        sysConfigData.nodes.push({ id: 'worker', name: 'Worker', role: 'worker', host: '', cameras: [] });
+        renderSystem();
+      } else if (action === 'delete-node') {
+        readConfigForm();
+        sysConfigData.nodes.splice(Number(btn.dataset.index), 1);
+        renderSystem();
+      } else if (action === 'save-config') {
+        await saveAdminConfig(false);
+      } else if (action === 'apply-config') {
+        await saveAdminConfig(true);
+      }
+    } catch (e) {
+      const result = document.getElementById('config-result');
+      if (result) result.textContent = e && e.message ? e.message : String(e);
+    }
+  }));
+}
 
 /* ------------------------------------------------------------------ *
  *  Recording and playback

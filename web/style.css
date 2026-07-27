@@ -210,6 +210,16 @@ html, body {
   padding: 20px; color: var(--muted);
 }
 .sys-error { color: #ffd0d0; }
+.config-actions {
+  display: flex; gap: 8px; align-items: center; margin-bottom: 10px; flex-wrap: wrap;
+}
+.config-table input {
+  width: 100%;
+  min-width: 120px;
+}
+.config-table input.wide {
+  min-width: 220px;
+}
 
 /* Recording/playback */
 .rec-box {

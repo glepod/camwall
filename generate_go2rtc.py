@@ -23,8 +23,8 @@ def stream_block(cam):
     ip = cam["ip"]
     user = onvif_user()
     passwd = onvif_pass()
-    main = f"rtsp://{user}:{passwd}@{ip}:554/stream1"
-    sub = f"rtsp://{user}:{passwd}@{ip}:554/stream2"
+    main = cam.get("rtsp_main") or f"rtsp://{user}:{passwd}@{ip}:554/stream1"
+    sub = cam.get("rtsp_sub") or cam.get("rtsp_main") or f"rtsp://{user}:{passwd}@{ip}:554/stream2"
     return [
         f"  {key}:",
         f"    - {main}#backchannel=0#timeout=30",

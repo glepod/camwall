@@ -11,6 +11,7 @@ handles the UI and PTZ control. Stdlib only, no third-party deps.
 import json, os, base64, hashlib, secrets, datetime, urllib.request, urllib.error
 import socket, time
 import threading
+import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs, quote
@@ -56,17 +57,27 @@ REC_DEFAULT = {
 
 with open(CAMS) as f:
     CAMERAS = json.load(f)          # base: key, name (default), ip
-CAM_BY_KEY = {c["key"]: c for c in CAMERAS}
 try:
     with open(NODES_FILE) as f:
         NODES = json.load(f)
 except Exception:
     NODES = []
-NODE_BY_ID = {n["id"]: n for n in NODES}
+CAM_BY_KEY = {}
+NODE_BY_ID = {}
 CAM_NODE = {}
-for node in NODES:
-    for key in node.get("cameras", []):
-        CAM_NODE[key] = node["id"]
+CONFIG_LOCK = threading.RLock()
+KEY_RE = re.compile(r"^[a-z][a-z0-9_]{1,62}$")
+
+def rebuild_topology():
+    global CAM_BY_KEY, NODE_BY_ID, CAM_NODE
+    CAM_BY_KEY = {c["key"]: c for c in CAMERAS}
+    NODE_BY_ID = {n["id"]: n for n in NODES}
+    CAM_NODE = {}
+    for node in NODES:
+        for key in node.get("cameras", []):
+            CAM_NODE[key] = node["id"]
+
+rebuild_topology()
 
 def _tapo_pass():
     try:
@@ -79,6 +90,23 @@ def _tapo_pass():
 
 def _public_url():
     return os.environ.get("CAMWALL_PUBLIC_URL", "").rstrip("/")
+
+def use_proxy_routes():
+    return os.environ.get("CAMWALL_USE_PROXY_ROUTES", "0") == "1"
+
+def node_go2rtc_ws_base(node):
+    if node.get("go2rtc_ws"):
+        return node["go2rtc_ws"]
+    if use_proxy_routes():
+        return node.get("go2rtc_proxy", f"/node/{node.get('id')}/go2rtc") + "/api/ws?src="
+    return f"ws://{node.get('host')}:1984/api/ws?src="
+
+def node_recording_file_base(node):
+    if node.get("recording_url"):
+        return node["recording_url"].rstrip("/")
+    if use_proxy_routes():
+        return node.get("recording_proxy", f"/node/{node.get('id')}/recording")
+    return f"http://{node.get('host')}:8091"
 
 # Per-camera overrides: {key: {"name": str, "ts": "off|osd|ffmpeg"}}
 def load_cfg():
@@ -95,6 +123,151 @@ def save_cfg(cfg):
     os.replace(tmp, CFG_FILE)
 
 CONFIG = load_cfg()
+
+def write_json_atomic(path, value):
+    tmp = path + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(value, f, indent=2)
+        f.write("\n")
+    os.replace(tmp, path)
+
+def normalize_camera(raw):
+    if not isinstance(raw, dict):
+        raise ValueError("camera must be an object")
+    key = str(raw.get("key", "")).strip().lower().replace("-", "_")
+    if not KEY_RE.match(key):
+        raise ValueError("camera key must start with a letter and contain lowercase letters, numbers, and underscores")
+    name = str(raw.get("name", "")).strip()[:80]
+    ip = str(raw.get("ip", "")).strip()
+    if not name:
+        raise ValueError(f"camera {key} requires a name")
+    if not ip:
+        raise ValueError(f"camera {key} requires an ip or hostname")
+    out = {"key": key, "name": name, "ip": ip}
+    for field in ("rtsp_main", "rtsp_sub"):
+        value = str(raw.get(field, "")).strip()
+        if value:
+            if not value.startswith("rtsp://"):
+                raise ValueError(f"{field} for {key} must start with rtsp://")
+            out[field] = value
+    for field in ("rtsp_port", "onvif_port"):
+        if raw.get(field) not in (None, ""):
+            out[field] = max(1, min(65535, int(raw.get(field))))
+    return out
+
+def normalize_node(raw, valid_camera_keys):
+    if not isinstance(raw, dict):
+        raise ValueError("node must be an object")
+    node_id = str(raw.get("id", "")).strip().lower().replace("-", "_")
+    if not KEY_RE.match(node_id):
+        raise ValueError("node id must start with a letter and contain lowercase letters, numbers, and underscores")
+    host = str(raw.get("host", "")).strip()
+    if not host:
+        raise ValueError(f"node {node_id} requires a host")
+    cameras = []
+    for key in raw.get("cameras") or []:
+        key = str(key).strip()
+        if key not in valid_camera_keys:
+            raise ValueError(f"node {node_id} references unknown camera {key}")
+        if key not in cameras:
+            cameras.append(key)
+    out = {
+        "id": node_id,
+        "name": str(raw.get("name") or node_id).strip()[:80],
+        "role": str(raw.get("role") or ("master" if node_id == "master" else "worker")).strip()[:24],
+        "host": host,
+        "go2rtc_proxy": str(raw.get("go2rtc_proxy") or f"/node/{node_id}/go2rtc").strip(),
+        "recording_proxy": str(raw.get("recording_proxy") or f"/node/{node_id}/recording").strip(),
+        "webrtc_candidate": str(raw.get("webrtc_candidate") or f"{host}:8555").strip(),
+        "cameras": cameras,
+    }
+    for field in ("go2rtc_ws", "recording_url"):
+        value = str(raw.get(field, "")).strip()
+        if value:
+            out[field] = value
+    return out
+
+def config_payload():
+    return {
+        "generated_at": now_iso(),
+        "cameras": CAMERAS,
+        "nodes": NODES,
+        "camera_overrides": CONFIG,
+    }
+
+def save_topology(cameras, nodes):
+    global CAMERAS, NODES, CONFIG
+    normalized_cameras = [normalize_camera(c) for c in cameras]
+    keys = [c["key"] for c in normalized_cameras]
+    if len(keys) != len(set(keys)):
+        raise ValueError("camera keys must be unique")
+    valid_keys = set(keys)
+    normalized_nodes = [normalize_node(n, valid_keys) for n in nodes]
+    if not normalized_nodes:
+        host = socket.gethostbyname(socket.gethostname())
+        normalized_nodes = [normalize_node({
+            "id": "master",
+            "name": "Master",
+            "role": "master",
+            "host": host,
+            "cameras": keys,
+        }, valid_keys)]
+    node_ids = [n["id"] for n in normalized_nodes]
+    if len(node_ids) != len(set(node_ids)):
+        raise ValueError("node ids must be unique")
+    assigned = {key for node in normalized_nodes for key in node.get("cameras", [])}
+    missing = [key for key in keys if key not in assigned]
+    if missing:
+        normalized_nodes[0]["cameras"].extend(missing)
+
+    with CONFIG_LOCK:
+        write_json_atomic(CAMS, normalized_cameras)
+        write_json_atomic(NODES_FILE, normalized_nodes)
+        CONFIG = {key: value for key, value in CONFIG.items() if key in valid_keys}
+        save_cfg(CONFIG)
+        CAMERAS = normalized_cameras
+        NODES = normalized_nodes
+        rebuild_topology()
+        refresh_recordings_cache_soon()
+    return config_payload()
+
+def apply_runtime_config():
+    out = {"ok": True, "steps": []}
+    try:
+        rendered = subprocess.run(
+            [os.path.join(os.path.dirname(BASE), "scripts", "render-go2rtc.sh")],
+            cwd=os.path.dirname(BASE), capture_output=True, text=True, timeout=30)
+        out["steps"].append({
+            "name": "render-go2rtc",
+            "ok": rendered.returncode == 0,
+            "stdout": rendered.stdout[-400:],
+            "stderr": rendered.stderr[-400:],
+        })
+        if rendered.returncode != 0:
+            out["ok"] = False
+            return out
+    except Exception as e:
+        out["ok"] = False
+        out["steps"].append({"name": "render-go2rtc", "ok": False, "error": str(e)})
+        return out
+
+    try:
+        restarted = subprocess.run(
+            ["docker", "compose", "up", "-d", "--force-recreate", "go2rtc"],
+            cwd=os.path.dirname(BASE), capture_output=True, text=True, timeout=60)
+        out["steps"].append({
+            "name": "restart-go2rtc",
+            "ok": restarted.returncode == 0,
+            "stdout": restarted.stdout[-400:],
+            "stderr": restarted.stderr[-400:],
+        })
+        if restarted.returncode != 0:
+            out["ok"] = False
+    except Exception as e:
+        out["ok"] = False
+        out["steps"].append({"name": "restart-go2rtc", "ok": False, "error": str(e)})
+    out["reload_recorders"] = reload_recorders(load_recording_config())
+    return out
 
 def load_recording_config():
     try:
@@ -245,7 +418,7 @@ def _read_recordings_node(node):
     out = []
     if not resp.get("ok"):
         return item, out
-    proxy = node.get("recording_proxy", f"/node/{node.get('id')}/recording")
+    proxy = node_recording_file_base(node)
     for rec in (resp.get("data") or {}).get("recordings", []):
         cam = CAM_BY_KEY.get(rec.get("camera"), {})
         out.append({
@@ -355,7 +528,7 @@ def merged_cameras():
                     "ts": o.get("ts", "off"),
                     "node": node_id,
                     "node_name": node.get("name", node_id),
-                    "ws_base": node.get("go2rtc_proxy", "/go2rtc") + "/api/ws?src="})
+                    "ws_base": node_go2rtc_ws_base(node)})
     return out
 
 def now_iso():
@@ -479,7 +652,9 @@ def build_system_status():
     with ThreadPoolExecutor(max_workers=12) as pool:
         future_map = {}
         for cam in cameras:
-            for label, port in (("rtsp_554", 554), ("onvif_2020", 2020)):
+            rtsp_port = int(CAM_BY_KEY.get(cam["key"], {}).get("rtsp_port") or 554)
+            onvif_port = int(CAM_BY_KEY.get(cam["key"], {}).get("onvif_port") or ONVIF_PORT)
+            for label, port in (("rtsp_554", rtsp_port), ("onvif_2020", onvif_port)):
                 future_map[pool.submit(tcp_check, cam["ip"], port)] = (cam["key"], label)
         for future in as_completed(future_map):
             key, label = future_map[future]
@@ -594,18 +769,18 @@ def wsse():
             f'</UsernameToken></Security>')
 
 
-def onvif_call(ip, body, timeout=5):
+def onvif_call(ip, body, port=ONVIF_PORT, timeout=5):
     env = (f'<?xml version="1.0"?><s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope">'
            f'<s:Header>{wsse()}</s:Header>'
            f'<s:Body xmlns:tt="http://www.onvif.org/ver10/schema">{body}</s:Body></s:Envelope>')
-    req = urllib.request.Request(f"http://{ip}:{ONVIF_PORT}/onvif/ptz",
+    req = urllib.request.Request(f"http://{ip}:{port}/onvif/ptz",
                                  data=env.encode(),
                                  headers={"Content-Type": "application/soap+xml"})
     with urllib.request.urlopen(req, timeout=timeout) as r:
         return r.status
 
 
-def ptz_move(ip, x, y):
+def ptz_move(cam, x, y):
     # Continuous move, with a Timeout safety net so the camera auto-stops
     # even if the Stop command is lost or arrives out of order.
     x = max(-1.0, min(1.0, x)); y = max(-1.0, min(1.0, y))
@@ -614,10 +789,10 @@ def ptz_move(ip, x, y):
             f'<Velocity><PanTilt x="{x}" y="{y}" xmlns="http://www.onvif.org/ver10/schema"/></Velocity>'
             f'<Timeout>PT1S</Timeout>'
             f'</ContinuousMove>')
-    return onvif_call(ip, body)
+    return onvif_call(cam["ip"], body, int(cam.get("onvif_port") or ONVIF_PORT))
 
 
-def ptz_relative(ip, dx, dy):
+def ptz_relative(cam, dx, dy):
     # Relative move — a fixed, self-terminating increment. No Stop needed, so
     # there is no move/stop race and the camera can never "run to the limit".
     dx = max(-1.0, min(1.0, dx)); dy = max(-1.0, min(1.0, dy))
@@ -625,13 +800,13 @@ def ptz_relative(ip, dx, dy):
             f'<ProfileToken>{PROFILE}</ProfileToken>'
             f'<Translation><PanTilt x="{dx}" y="{dy}" xmlns="http://www.onvif.org/ver10/schema"/></Translation>'
             f'</RelativeMove>')
-    return onvif_call(ip, body)
+    return onvif_call(cam["ip"], body, int(cam.get("onvif_port") or ONVIF_PORT))
 
 
-def ptz_stop(ip):
+def ptz_stop(cam):
     body = (f'<Stop xmlns="http://www.onvif.org/ver20/ptz/wsdl">'
             f'<ProfileToken>{PROFILE}</ProfileToken><PanTilt>true</PanTilt><Zoom>true</Zoom></Stop>')
-    return onvif_call(ip, body)
+    return onvif_call(cam["ip"], body, int(cam.get("onvif_port") or ONVIF_PORT))
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -652,6 +827,13 @@ class Handler(BaseHTTPRequestHandler):
         if self.command != "HEAD":
             self.wfile.write(body)
 
+    def _json_body(self):
+        length = int(self.headers.get("Content-Length") or "0")
+        if length > 1024 * 1024:
+            raise ValueError("request body too large")
+        raw = self.rfile.read(length) if length else b"{}"
+        return json.loads(raw.decode() or "{}")
+
     def do_GET(self):
         # Redirect direct plain-HTTP access (e.g. http://server1.lan:8090) to the
         # trusted HTTPS endpoint. Traefik-proxied requests carry X-Forwarded-Proto
@@ -667,6 +849,8 @@ class Handler(BaseHTTPRequestHandler):
         path = u.path
         if path == "/api/cameras":
             return self._send(200, json.dumps(merged_cameras()), "application/json")
+        if path == "/api/admin/config":
+            return self._send(200, json.dumps(config_payload()), "application/json")
         if path == "/api/system":
             return self._send(200, json.dumps(build_system_status()), "application/json")
         if path == "/api/recording/config":
@@ -791,15 +975,15 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(404, json.dumps({"error": "unknown camera"}))
             try:
                 if (q.get("stop") or ["0"])[0] == "1":
-                    ptz_stop(cam["ip"])
+                    ptz_stop(cam)
                 elif "dx" in q or "dy" in q:
                     dx = float((q.get("dx") or ["0"])[0])
                     dy = float((q.get("dy") or ["0"])[0])
-                    ptz_relative(cam["ip"], dx, dy)
+                    ptz_relative(cam, dx, dy)
                 else:
                     x = float((q.get("x") or ["0"])[0])
                     y = float((q.get("y") or ["0"])[0])
-                    ptz_move(cam["ip"], x, y)
+                    ptz_move(cam, x, y)
                 return self._send(200, json.dumps({"ok": True}))
             except Exception as e:
                 return self._send(502, json.dumps({"error": str(e)}))
@@ -807,6 +991,28 @@ class Handler(BaseHTTPRequestHandler):
         return self._static(path)
 
     do_HEAD = do_GET
+
+    def do_POST(self):
+        public_url = _public_url()
+        if public_url and self.headers.get("X-Forwarded-Proto") is None:
+            self.send_response(302)
+            self.send_header("Location", public_url + self.path)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
+        u = urlparse(self.path)
+        try:
+            if u.path == "/api/admin/config":
+                payload = self._json_body()
+                saved = save_topology(payload.get("cameras") or [], payload.get("nodes") or [])
+                return self._send(200, json.dumps({"ok": True, **saved}))
+            if u.path == "/api/admin/apply":
+                return self._send(200, json.dumps(apply_runtime_config()))
+            return self._send(404, json.dumps({"error": "not found"}))
+        except ValueError as e:
+            return self._send(400, json.dumps({"ok": False, "error": str(e)}))
+        except Exception as e:
+            return self._send(500, json.dumps({"ok": False, "error": str(e)}))
 
     def _static(self, path):
         if path == "/" or path == "":
